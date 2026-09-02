@@ -1,2 +1,2 @@
-export 'consulta_storage.dart';
+export 'storage.dart';
 export 'consultas_mock.dart';
