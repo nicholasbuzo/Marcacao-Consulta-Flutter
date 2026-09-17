@@ -13,23 +13,58 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with RouteAware {
   List<Consulta> _consultas = [];
+  String _nomePaciente = '';
   bool _carregando = true;
 
   @override
   void initState() {
     super.initState();
-    _carregarConsultas();
+    _carregarDados();
   }
 
-  Future<void> _carregarConsultas() async {
-    final consultas = await Storage.obterConsultas();
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final rota = ModalRoute.of(context);
+    if (rota != null) {
+      appRouteObserver.subscribe(this, rota);
+    }
+  }
+
+  @override
+  void dispose() {
+    appRouteObserver.unsubscribe(this);
+    super.dispose();
+  }
+
+  @override
+  void didPopNext() {
+    _carregarDados();
+  }
+
+  Future<void> _carregarDados() async {
+    final paciente = await Storage.obterPacienteLogado();
+    if (!mounted) {
+      return;
+    }
+    if (paciente == null) {
+      Navigator.pushReplacementNamed(context, AppRoutes.login);
+      return;
+    }
+
+    final todas = await Storage.obterConsultas();
+    final doPaciente = todas
+        .where((consulta) => consulta.paciente.id == paciente.id)
+        .toList();
+
     if (!mounted) {
       return;
     }
     setState(() {
-      _consultas = consultas;
+      _nomePaciente = paciente.nome;
+      _consultas = doPaciente;
       _carregando = false;
     });
   }
@@ -43,26 +78,69 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _atualizarStatus(int id, StatusConsulta status) async {
+    final paciente = await Storage.obterPacienteLogado();
+    final todas = await Storage.obterConsultas();
+    final atualizadas = todas
+        .map(
+          (consulta) =>
+              consulta.id == id ? consulta.copyWith(status: status) : consulta,
+        )
+        .toList();
+    await Storage.salvarConsultas(atualizadas);
+
+    if (!mounted || paciente == null) {
+      return;
+    }
     setState(() {
-      _consultas = _consultas
-          .map(
-            (consulta) => consulta.id == id
-                ? consulta.copyWith(status: status)
-                : consulta,
-          )
+      _consultas = atualizadas
+          .where((consulta) => consulta.paciente.id == paciente.id)
           .toList();
     });
-    await Storage.salvarConsultas(_consultas);
-  }
-
-  Future<void> _abrirAdmin() async {
-    await Navigator.pushNamed(context, AppRoutes.admin);
-    await _carregarConsultas();
   }
 
   void _abrirDetalhes(int id) {
     final consulta = _consultas.firstWhere((item) => item.id == id);
     Navigator.pushNamed(context, AppRoutes.detalhe, arguments: consulta);
+  }
+
+  Future<void> _abrirAgendamento() async {
+    await Navigator.pushNamed(context, AppRoutes.agendamento);
+    await _carregarDados();
+  }
+
+  Future<void> _sair() async {
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (contextoDialogo) {
+        return AlertDialog(
+          title: const Text('Sair'),
+          content: const Text('Deseja realmente sair da sua conta?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(contextoDialogo, false),
+              child: const Text('Cancelar'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(contextoDialogo, true),
+              child: const Text('Sair'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmar != true) {
+      return;
+    }
+    await Storage.removerPacienteLogado();
+    if (!mounted) {
+      return;
+    }
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      AppRoutes.login,
+      (route) => false,
+    );
   }
 
   @override
@@ -74,23 +152,60 @@ class _HomeScreenState extends State<HomeScreen> {
         foregroundColor: AppColors.branco,
         elevation: 0,
         title: const Text('Minhas Consultas'),
-        actions: [
-          IconButton(
-            tooltip: 'Painel administrativo',
-            onPressed: _abrirAdmin,
-            icon: const Icon(Icons.admin_panel_settings_outlined),
-          ),
-        ],
       ),
       body: SafeArea(
         child: Column(
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
-              child: Text(
-                '${_consultas.length} consulta(s) agendada(s)',
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: AppColors.branco, fontSize: 16),
+              child: Column(
+                children: [
+                  Text(
+                    _nomePaciente.isEmpty ? 'Olá!' : 'Olá, $_nomePaciente!',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: AppColors.branco,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${_consultas.length} consulta(s) agendada(s)',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: AppColors.branco,
+                      fontSize: 16,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ElevatedButton(
+                    onPressed: _abrirAgendamento,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.sucesso,
+                      foregroundColor: AppColors.branco,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    child: const Text('+ Agendar Nova Consulta'),
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton(
+                    onPressed: _sair,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.branco,
+                      side: const BorderSide(color: AppColors.branco),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    child: const Text('Sair'),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 24),
@@ -108,7 +223,21 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
     if (_consultas.isEmpty) {
-      return _EstadoVazio(onAbrirAdmin: _abrirAdmin);
+      return const Padding(
+        padding: EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.calendar_month, color: AppColors.branco, size: 48),
+            SizedBox(height: 16),
+            Text(
+              'Você ainda não tem consultas agendadas',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppColors.branco, fontSize: 18),
+            ),
+          ],
+        ),
+      );
     }
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
@@ -124,39 +253,6 @@ class _HomeScreenState extends State<HomeScreen> {
           onVerDetalhes: _abrirDetalhes,
         );
       },
-    );
-  }
-}
-
-class _EstadoVazio extends StatelessWidget {
-  const _EstadoVazio({required this.onAbrirAdmin});
-
-  final VoidCallback onAbrirAdmin;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Text(
-            'Nenhuma consulta agendada ainda',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: AppColors.branco, fontSize: 16),
-          ),
-          const SizedBox(height: 20),
-          ElevatedButton(
-            onPressed: onAbrirAdmin,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.branco,
-              foregroundColor: AppColors.primaria,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-            ),
-            child: const Text('Ir para Admin'),
-          ),
-        ],
-      ),
     );
   }
 }
